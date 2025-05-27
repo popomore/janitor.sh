@@ -1,0 +1,26 @@
+FROM ubuntu:22.04
+
+# Install necessary tools
+RUN apt-get update && apt-get install -y \
+    bash \
+    coreutils \
+    findutils \
+    util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create working directory
+WORKDIR /app
+
+# Copy script files
+COPY janitor.sh /app/
+COPY test/test_janitor.sh /app/
+COPY test/test_janitor.conf /app/
+
+# Set execute permissions
+RUN chmod +x /app/*.sh
+
+# Create necessary directories
+RUN mkdir -p /tmp /var/tmp /var/log /var/cache
+
+# Set default command
+CMD ["/bin/bash"]

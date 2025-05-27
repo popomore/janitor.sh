@@ -1,0 +1,22 @@
+# Linux Temporary Files Cleanup Script Configuration File
+#
+# Trigger threshold: Start cleanup when disk usage exceeds this percentage
+TRIGGER_THRESHOLD=90
+
+# Target threshold: Stop cleanup when disk usage reaches this percentage
+TARGET_THRESHOLD=50
+
+# File retention time (hours): Files modified within this time will not be deleted
+RETENTION_HOURS=24
+
+# Batch size: Maximum number of files to delete per directory scan
+BATCH_SIZE=100
+
+# Temporary directories list: Comma separated, ordered by priority (first has highest priority)
+TEMP_DIRS="/tmp,/var/tmp,/var/log,/var/cache"
+
+# Notes:
+# 1. TRIGGER_THRESHOLD must be greater than TARGET_THRESHOLD
+# 2. Setting RETENTION_HOURS to 0 means delete all files (use with caution)
+# 3. BATCH_SIZE should be set to a reasonable value to avoid deleting too many files at once
+# 4. Directories in TEMP_DIRS will be processed in order, put most important directories first

@@ -1,0 +1,196 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Disk Janitor - Cursor Rules
+
+## Project Overview
+This is a smart disk cleanup tool that automatically removes temporary files based on configurable thresholds. The project consists of Bash scripts for Linux systems with Docker testing support.
+
+## Core Principles
+- **Safety First**: Always prioritize data safety with dry-run modes and careful validation
+- **Configurability**: Make everything configurable through clear configuration files
+- **Logging**: Provide detailed, timestamped logging for all operations
+- **Cross-platform**: Support different Linux distributions and find command variants
+- **Testing**: Include comprehensive testing tools and Docker environments
+
+## File Structure
+```
+bash/
+├── clean_temp_files.sh          # Main cleanup script
+├── clean_temp_files.conf        # Default configuration
+├── test_clean_temp_files.sh     # Testing tool
+├── run_docker_test.sh           # Docker test runner
+├── Dockerfile.test              # Docker test environment
+└── README_temp_cleaner.md       # Documentation
+```
+
+## Coding Standards
+
+### Bash Script Guidelines
+- Use `set -euo pipefail` for strict error handling
+- Always quote variables: `"$variable"` not `$variable`
+- Use `local` for function variables
+- Prefer `[[ ]]` over `[ ]` for conditionals
+- Use meaningful function and variable names
+- Add comprehensive comments for complex logic
+
+### Function Structure
+```bash
+# Function description
+function_name() {
+    local param1="$1"
+    local param2="${2:-default_value}"
+
+    # Validation
+    if [[ ! -f "$param1" ]]; then
+        log_error "File not found: $param1"
+        return 1
+    fi
+
+    # Main logic with error handling
+    if command_here; then
+        log_info "Success message"
+        return 0
+    else
+        log_error "Error message"
+        return 1
+    fi
+}
+```
+
+### Logging Standards
+- Use consistent log functions: `log_info`, `log_warn`, `log_error`
+- Include timestamps in all log messages
+- Use descriptive messages with context
+- Redirect function output to stderr when returning values: `>&2`
+
+### Configuration Management
+- Use clear, commented configuration files
+- Validate all configuration parameters
+- Provide sensible defaults
+- Support both system-wide and local configurations
+
+### Error Handling
+- Always check command return codes
+- Provide meaningful error messages
+- Use appropriate exit codes (0=success, 1=error)
+- Implement graceful degradation where possible
+
+## Development Workflow
+
+### Before Making Changes
+1. Run existing tests: `./run_docker_test.sh -t`
+2. Test in dry-run mode: `./run_docker_test.sh -d`
+3. Review configuration impact
+
+### Testing Requirements
+- All new features must include test cases
+- Test both dry-run and actual execution modes
+- Verify cross-platform compatibility (GNU/BSD find)
+- Test edge cases (empty directories, permission issues)
+
+### Docker Testing
+- Use Docker for isolated testing environments
+- Test with different base images when needed
+- Ensure tests are reproducible and clean up after themselves
+
+## Security Considerations
+- Never delete files without proper validation
+- Implement safeguards against accidental deletion
+- Validate all input parameters
+- Use absolute paths where possible
+- Implement proper file permission checks
+
+## Performance Guidelines
+- Process files in batches to avoid overwhelming the system
+- Include sleep delays between operations
+- Monitor disk usage efficiently
+- Optimize find commands for large directories
+
+## Documentation Standards
+- Keep README files up to date
+- Document all configuration options
+- Include usage examples
+- Provide troubleshooting guides
+- Comment complex algorithms inline
+
+## Code Review Checklist
+- [ ] Error handling implemented
+- [ ] Logging added for important operations
+- [ ] Configuration validated
+- [ ] Tests updated/added
+- [ ] Documentation updated
+- [ ] Security implications considered
+- [ ] Cross-platform compatibility verified
+
+## Common Patterns
+
+### Configuration Loading
+```bash
+load_config() {
+    # Set defaults first
+    PARAM1="default_value"
+
+    # Load from file with validation
+    if [[ -f "$CONFIG_FILE" ]]; then
+        while IFS='=' read -r key value; do
+            [[ $key =~ ^[[:space:]]*# ]] && continue
+            case "$key" in
+                PARAM1) PARAM1="$value" ;;
+            esac
+        done < "$CONFIG_FILE"
+    fi
+
+    # Validate configuration
+    if [[ $PARAM1 -lt 0 ]]; then
+        log_error "Invalid configuration"
+        exit 1
+    fi
+}
+```
+
+### Safe File Operations
+```bash
+cleanup_files() {
+    local dir="$1"
+
+    # Validate directory exists
+    if [[ ! -d "$dir" ]]; then
+        log_warn "Directory does not exist: $dir"
+        return 0
+    fi
+
+    # Use temporary file for file list
+    local temp_file
+    temp_file=$(mktemp)
+
+    # Find files with error handling
+    if ! find "$dir" -type f -mmin +60 > "$temp_file" 2>/dev/null; then
+        log_error "Failed to scan directory: $dir"
+        rm -f "$temp_file"
+        return 1
+    fi
+
+    # Process files safely
+    while IFS= read -r file; do
+        if [[ -f "$file" ]]; then
+            if [[ "$DRY_RUN" == "true" ]]; then
+                log_info "[DRY RUN] Would delete: $file"
+            else
+                rm -f "$file" && log_info "Deleted: $file"
+            fi
+        fi
+    done < "$temp_file"
+
+    rm -f "$temp_file"
+}
+```
+
+## Maintenance Notes
+- Review and update thresholds based on usage patterns
+- Monitor log files for recurring issues
+- Update documentation when adding new features
+- Test with different Linux distributions periodically
+- Keep Docker images updated for testing
