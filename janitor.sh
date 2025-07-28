@@ -252,7 +252,7 @@ cleanup_directory() {
 
     if [[ ! -d "$dir" ]]; then
         log_warn "Directory does not exist: $dir" >&2
-        echo "0"
+        printf "%d" 0
         return 0
     fi
 
@@ -271,24 +271,24 @@ cleanup_directory() {
     if find "$dir" -type f -mmin +$((RETENTION_HOURS * 60)) -printf '%T@ %p\n' 2>/dev/null | head -1 >/dev/null 2>&1; then
         # GNU find (supports -printf)
         log_debug "Using GNU find with -printf support" >&2
-        find "$dir" -type f -mmin +$((RETENTION_HOURS * 60)) -printf '%T@ %p\n' 2>/dev/null | \
-            sort -n | \
-            head -n "$BATCH_SIZE" | \
-            cut -d' ' -f2- > "$temp_file"
+        find "$dir" -type f -mmin +$((RETENTION_HOURS * 60)) -printf '%T@ %p\n' 2>/dev/null 2>&1 | \
+            sort -n 2>&1 | \
+            head -n "$BATCH_SIZE" 2>&1 | \
+            cut -d' ' -f2- > "$temp_file" 2>&1
     else
         # BSD find or other systems that don't support -printf
         log_debug "Using BSD find or fallback method" >&2
-        find "$dir" -type f -mmin +$((RETENTION_HOURS * 60)) 2>/dev/null | \
+        find "$dir" -type f -mmin +$((RETENTION_HOURS * 60)) 2>/dev/null 2>&1 | \
             while IFS= read -r file; do
                 if [[ -f "$file" ]]; then
                     # Get file modification timestamp
                     mtime=$(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file" 2>/dev/null || echo "0")
                     echo "$mtime $file"
                 fi
-            done | \
-            sort -n | \
-            head -n "$BATCH_SIZE" | \
-            cut -d' ' -f2- > "$temp_file"
+            done 2>&1 | \
+            sort -n 2>&1 | \
+            head -n "$BATCH_SIZE" 2>&1 | \
+            cut -d' ' -f2- > "$temp_file" 2>&1
     fi
 
     local file_count
@@ -299,7 +299,7 @@ cleanup_directory() {
     if [[ $file_count -eq 0 ]]; then
         log_info "No files found in directory $dir that meet deletion criteria" >&2
         rm -f "$temp_file"
-        echo "0"
+        printf "%d" 0
         return 0
     fi
 
@@ -359,7 +359,7 @@ cleanup_directory() {
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "[DRY RUN] Directory $dir will delete $file_count files" >&2
         log_debug "Dry run mode - no actual files deleted" >&2
-        echo "$file_count"  # Return number of files to be deleted
+        printf "%d" "$file_count"  # Return number of files to be deleted
     else
         # Convert bytes to human readable format
         local size_mb=$((total_size_deleted / 1024 / 1024))
@@ -376,7 +376,7 @@ cleanup_directory() {
 
         log_debug "Deletion summary: $files_deleted files deleted, total size: $total_size_deleted bytes ($size_str)" >&2
         log_info "Directory $dir successfully deleted $files_deleted files (total size: $size_str)" >&2
-        echo "$files_deleted"  # Return number of actually deleted files
+        printf "%d" "$files_deleted"  # Return number of actually deleted files
     fi
 }
 
@@ -384,51 +384,70 @@ cleanup_directory() {
 main_cleanup() {
     local total_deleted=0
 
-    log_debug "Starting main cleanup function" >&2
-    log_debug "TEMP_DIRS configuration: '$TEMP_DIRS'" >&2
+    log_debug "Starting main cleanup function"
+    log_debug "TEMP_DIRS configuration: '$TEMP_DIRS'"
 
     # Convert directory list to array
     IFS=',' read -ra DIR_ARRAY <<< "$TEMP_DIRS"
 
-    log_debug "Parsed directories: ${#DIR_ARRAY[@]} directories" >&2
+    log_debug "Parsed directories: ${#DIR_ARRAY[@]} directories"
     for i in "${!DIR_ARRAY[@]}"; do
-        log_debug "  Directory $((i+1)): '${DIR_ARRAY[i]}'" >&2
+        log_debug "  Directory $((i+1)): '${DIR_ARRAY[i]}'"
     done
 
     for dir in "${DIR_ARRAY[@]}"; do
         # Remove leading and trailing spaces
         dir=$(echo "$dir" | xargs)
-        log_debug "Processing directory: '$dir'" >&2
+        log_debug "Processing directory: '$dir'"
 
         # Check if target threshold is reached
-        log_debug "Checking if target threshold is reached" >&2
+        log_debug "Checking if target threshold is reached"
         if reached_target; then
-            log_debug "Target threshold reached, stopping cleanup" >&2
+            log_debug "Target threshold reached, stopping cleanup"
             break
         fi
 
         # Clean directory
         local deleted
+        log_debug "About to call cleanup_directory for: '$dir'"
         deleted=$(cleanup_directory "$dir")
-        log_debug "Directory '$dir' cleanup result: $deleted files" >&2
+        log_debug "cleanup_directory returned: '$deleted'"
+        log_debug "DEBUG: deleted=[$deleted] (length: ${#deleted})"
+
+        # Validate that deleted is a number
+        if ! [[ "$deleted" =~ ^[0-9]+$ ]]; then
+            log_error "Non-numeric deleted value: '$deleted'"
+            continue
+        fi
+
+        log_debug "Directory '$dir' cleanup result: $deleted files"
+        log_debug "About to add $deleted to total_deleted (currently $total_deleted)"
+        # Ensure deleted is a valid number (robust conversion)
+        deleted=$((10#$deleted))
         ((total_deleted += deleted))
+        log_debug "Total deleted so far: $total_deleted"
+        log_debug "About to check if we should continue to next directory"
 
         # If in dry run mode, continue processing all directories
         if [[ "$DRY_RUN" == "true" ]]; then
-            log_debug "Dry run mode - continuing to next directory" >&2
+            log_debug "Dry run mode - continuing to next directory"
             continue
         fi
 
         # If no files were deleted, skip to next directory
         if [[ $deleted -eq 0 ]]; then
-            log_debug "No files deleted from '$dir', skipping to next directory" >&2
+            log_debug "No files deleted from '$dir', skipping to next directory"
             continue
         fi
 
+        log_debug "Files were deleted from '$dir', will wait before next directory"
+
         # Brief wait to let system update disk usage
-        log_debug "Waiting 1 second for system to update disk usage" >&2
+        log_debug "Waiting 1 second for system to update disk usage"
         sleep 1
     done
+
+    log_debug "Finished processing all directories"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "[DRY RUN] Total files to be deleted: $total_deleted"
