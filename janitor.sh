@@ -382,7 +382,7 @@ cleanup_directory() {
 
 # Main cleanup function
 main_cleanup() {
-    local total_deleted=0
+    total_deleted=0
 
     log_debug "Starting main cleanup function"
     log_debug "TEMP_DIRS configuration: '$TEMP_DIRS'"
@@ -423,8 +423,12 @@ main_cleanup() {
         log_debug "Directory '$dir' cleanup result: $deleted files"
         log_debug "About to add $deleted to total_deleted (currently $total_deleted)"
         # Ensure deleted is a valid number (robust conversion)
+        log_debug "Before conversion: deleted='$deleted'"
         deleted=$((10#$deleted))
-        ((total_deleted += deleted))
+        log_debug "After conversion: deleted=$deleted"
+        log_debug "Before arithmetic: total_deleted=$total_deleted, deleted=$deleted"
+        total_deleted=$((total_deleted + deleted))
+        log_debug "After arithmetic: total_deleted=$total_deleted"
         log_debug "Total deleted so far: $total_deleted"
         log_debug "About to check if we should continue to next directory"
 
