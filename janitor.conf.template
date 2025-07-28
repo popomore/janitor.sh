@@ -15,8 +15,16 @@ BATCH_SIZE=100
 # Temporary directories list: Comma separated, ordered by priority (first has highest priority)
 TEMP_DIRS="/tmp,/var/tmp,/var/log,/var/cache"
 
+# Log level: DEBUG(0), INFO(1), WARN(2), ERROR(3) (default: INFO)
+# 0=DEBUG: Show detailed debug information including file details and operation steps
+# 1=INFO: Show general information about operations (default)
+# 2=WARN: Show only warnings and errors
+# 3=ERROR: Show only error messages
+LOG_LEVEL=INFO
+
 # Notes:
 # 1. TRIGGER_THRESHOLD must be greater than TARGET_THRESHOLD
 # 2. Setting RETENTION_HOURS to 0 means delete all files (use with caution)
 # 3. BATCH_SIZE should be set to a reasonable value to avoid deleting too many files at once
 # 4. Directories in TEMP_DIRS will be processed in order, put most important directories first
+# 5. LOG_LEVEL can be overridden by command line --debug option

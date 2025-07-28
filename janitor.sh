@@ -8,20 +8,48 @@ set -euo pipefail
 # Default configuration file path
 CONFIG_FILE="${CONFIG_FILE:-/etc/janitor.conf}"
 
+# Default log level
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+
 # Logging functions
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
+# Convert log level string to number
+get_log_level_number() {
+    case "${1:-INFO}" in
+        DEBUG|0) echo "0" ;;
+        INFO|1)  echo "1" ;;
+        WARN|2)  echo "2" ;;
+        ERROR|3) echo "3" ;;
+        *)       echo "1" ;; # Default to INFO
+    esac
+}
+
+log_debug() {
+    local current_level=$(get_log_level_number "$LOG_LEVEL")
+    if [[ $current_level -le 0 ]]; then
+        log "DEBUG: $1"
+    fi
+}
+
 log_info() {
-    log "INFO: $1"
+    local current_level=$(get_log_level_number "$LOG_LEVEL")
+    if [[ $current_level -le 1 ]]; then
+        log "INFO: $1"
+    fi
 }
 
 log_warn() {
-    log "WARN: $1"
+    local current_level=$(get_log_level_number "$LOG_LEVEL")
+    if [[ $current_level -le 2 ]]; then
+        log "WARN: $1"
+    fi
 }
 
 log_error() {
+    # Error messages are always shown regardless of log level
     log "ERROR: $1"
 }
 
@@ -44,11 +72,14 @@ Configuration file format:
     RETENTION_HOURS=24          # File retention time (hours)
     BATCH_SIZE=100              # Number of files to delete per batch
     TEMP_DIRS="/tmp,/var/tmp"   # Temporary directories list, comma separated
+    LOG_LEVEL=INFO              # Log level: DEBUG, INFO, WARN, ERROR (default: INFO)
 
 Examples:
     $0                          # Use default configuration
     $0 -c /path/to/config       # Use specified configuration file
     $0 -d -v                    # Dry run mode with verbose output
+    $0 --debug                  # Enable debug logging
+    $0 -d --debug               # Dry run with debug logging
 EOF
 }
 
@@ -69,6 +100,10 @@ parse_args() {
                 ;;
             -v|--verbose)
                 VERBOSE=true
+                shift
+                ;;
+            --debug)
+                LOG_LEVEL="DEBUG"
                 shift
                 ;;
             -h|--help)
@@ -92,6 +127,7 @@ load_config() {
     RETENTION_HOURS=24
     BATCH_SIZE=100
     TEMP_DIRS="/tmp"
+    LOG_LEVEL="INFO"
 
     # Load configuration
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -116,6 +152,7 @@ load_config() {
                 RETENTION_HOURS) RETENTION_HOURS="$value" ;;
                 BATCH_SIZE) BATCH_SIZE="$value" ;;
                 TEMP_DIRS) TEMP_DIRS="$value" ;;
+                LOG_LEVEL) LOG_LEVEL="$value" ;;
             esac
         done < "$CONFIG_FILE"
     fi
@@ -132,11 +169,14 @@ load_config() {
     log_info "  Retention hours: ${RETENTION_HOURS} hours"
     log_info "  Batch size: ${BATCH_SIZE} files"
     log_info "  Temp directories: $TEMP_DIRS"
+    log_info "  Log level: $LOG_LEVEL"
 }
 
 # Get disk usage
 get_disk_usage() {
     local path="$1"
+
+    log_debug "Getting disk usage for path: $path" >&2
 
     # Check if path exists
     if [[ ! -e "$path" ]]; then
@@ -149,6 +189,8 @@ get_disk_usage() {
     local usage
     usage=$(df "$path" 2>/dev/null | awk 'NR==2 {print $5}' | sed 's/%//')
 
+    log_debug "Raw disk usage output: $(df "$path" 2>/dev/null | head -2 | tail -1)" >&2
+
     # Validate the result is a number
     if [[ ! "$usage" =~ ^[0-9]+$ ]]; then
         log_error "Failed to get disk usage for path: $path"
@@ -156,6 +198,7 @@ get_disk_usage() {
         return 1
     fi
 
+    log_debug "Disk usage for $path: ${usage}%" >&2
     echo "$usage"
 }
 
@@ -205,9 +248,11 @@ cleanup_directory() {
     local dir="$1"
     local files_deleted=0
 
+    log_debug "Starting cleanup_directory function for: $dir" >&2
+
     if [[ ! -d "$dir" ]]; then
         log_warn "Directory does not exist: $dir" >&2
-        echo 0
+        echo "0"
         return 0
     fi
 
@@ -217,16 +262,22 @@ cleanup_directory() {
     local temp_file
     temp_file=$(mktemp)
 
+    log_debug "Using retention period: ${RETENTION_HOURS} hours (${RETENTION_HOURS} * 60 = $((RETENTION_HOURS * 60)) minutes)" >&2
+    log_debug "Batch size: $BATCH_SIZE files" >&2
+    log_debug "Temporary file for file list: $temp_file" >&2
+
     # Use find to search files, sorted by modification time (oldest to newest)
     # Compatible with different systems' find commands
     if find "$dir" -type f -mmin +$((RETENTION_HOURS * 60)) -printf '%T@ %p\n' 2>/dev/null | head -1 >/dev/null 2>&1; then
         # GNU find (supports -printf)
+        log_debug "Using GNU find with -printf support" >&2
         find "$dir" -type f -mmin +$((RETENTION_HOURS * 60)) -printf '%T@ %p\n' 2>/dev/null | \
             sort -n | \
             head -n "$BATCH_SIZE" | \
             cut -d' ' -f2- > "$temp_file"
     else
         # BSD find or other systems that don't support -printf
+        log_debug "Using BSD find or fallback method" >&2
         find "$dir" -type f -mmin +$((RETENTION_HOURS * 60)) 2>/dev/null | \
             while IFS= read -r file; do
                 if [[ -f "$file" ]]; then
@@ -243,44 +294,89 @@ cleanup_directory() {
     local file_count
     file_count=$(wc -l < "$temp_file")
 
+    log_debug "Found $file_count files in temporary file list" >&2
+
     if [[ $file_count -eq 0 ]]; then
         log_info "No files found in directory $dir that meet deletion criteria" >&2
         rm -f "$temp_file"
-        echo 0
+        echo "0"
         return 0
     fi
 
     log_info "Found $file_count files that meet deletion criteria" >&2
 
-    # Delete files
+    # Show file list in debug mode
+    if [[ "${LOG_LEVEL:-INFO}" == "DEBUG" ]]; then
+        log_debug "Files to be processed:" >&2
+        while IFS= read -r file; do
+            if [[ -f "$file" ]]; then
+                local file_size
+                file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
+                local file_mtime
+                file_mtime=$(stat -f%m "$file" 2>/dev/null || stat -c%Y "$file" 2>/dev/null || echo "0")
+                local file_date
+                file_date=$(date -d "@$file_mtime" 2>/dev/null || date -r "$file_mtime" 2>/dev/null || echo "unknown")
+                log_debug "  - $file (size: ${file_size} bytes, mtime: $file_date)" >&2
+            fi
+        done < "$temp_file"
+    fi
+
+        # Delete files
+    local total_size_deleted=0
+    log_debug "Starting file deletion process" >&2
+
     while IFS= read -r file; do
         if [[ -f "$file" ]]; then
             local file_size
             file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
 
+            log_debug "Processing file: $file (size: ${file_size} bytes)" >&2
+
             if [[ "$DRY_RUN" == "true" ]]; then
                 log_info "[DRY RUN] Will delete file: $file (size: ${file_size} bytes)" >&2
             else
+                log_debug "Attempting to delete file: $file" >&2
                 if rm -f "$file" 2>/dev/null; then
                     ((files_deleted++))
+                    ((total_size_deleted += file_size))
+                    log_debug "Successfully deleted file: $file" >&2
                     if [[ "$VERBOSE" == "true" ]]; then
                         log_info "Deleted file: $file (size: ${file_size} bytes)" >&2
                     fi
                 else
                     log_warn "Failed to delete file: $file" >&2
+                    log_debug "Delete operation failed for file: $file" >&2
                 fi
             fi
+        else
+            log_debug "File no longer exists: $file" >&2
         fi
     done < "$temp_file"
 
     rm -f "$temp_file"
+    log_debug "Cleaned up temporary file: $temp_file" >&2
 
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "[DRY RUN] Directory $dir will delete $file_count files" >&2
-        echo $file_count  # Return number of files to be deleted
+        log_debug "Dry run mode - no actual files deleted" >&2
+        echo "$file_count"  # Return number of files to be deleted
     else
-        log_info "Directory $dir successfully deleted $files_deleted files" >&2
-        echo $files_deleted  # Return number of actually deleted files
+        # Convert bytes to human readable format
+        local size_mb=$((total_size_deleted / 1024 / 1024))
+        local size_kb=$(((total_size_deleted % (1024 * 1024)) / 1024))
+        local size_str=""
+        if [[ $size_mb -gt 0 ]]; then
+            size_str="${size_mb}MB"
+            if [[ $size_kb -gt 0 ]]; then
+                size_str="${size_str} ${size_kb}KB"
+            fi
+        else
+            size_str="${size_kb}KB"
+        fi
+
+        log_debug "Deletion summary: $files_deleted files deleted, total size: $total_size_deleted bytes ($size_str)" >&2
+        log_info "Directory $dir successfully deleted $files_deleted files (total size: $size_str)" >&2
+        echo "$files_deleted"  # Return number of actually deleted files
     fi
 }
 
@@ -288,34 +384,49 @@ cleanup_directory() {
 main_cleanup() {
     local total_deleted=0
 
+    log_debug "Starting main cleanup function" >&2
+    log_debug "TEMP_DIRS configuration: '$TEMP_DIRS'" >&2
+
     # Convert directory list to array
     IFS=',' read -ra DIR_ARRAY <<< "$TEMP_DIRS"
+
+    log_debug "Parsed directories: ${#DIR_ARRAY[@]} directories" >&2
+    for i in "${!DIR_ARRAY[@]}"; do
+        log_debug "  Directory $((i+1)): '${DIR_ARRAY[i]}'" >&2
+    done
 
     for dir in "${DIR_ARRAY[@]}"; do
         # Remove leading and trailing spaces
         dir=$(echo "$dir" | xargs)
+        log_debug "Processing directory: '$dir'" >&2
 
         # Check if target threshold is reached
+        log_debug "Checking if target threshold is reached" >&2
         if reached_target; then
+            log_debug "Target threshold reached, stopping cleanup" >&2
             break
         fi
 
         # Clean directory
         local deleted
         deleted=$(cleanup_directory "$dir")
+        log_debug "Directory '$dir' cleanup result: $deleted files" >&2
         ((total_deleted += deleted))
 
         # If in dry run mode, continue processing all directories
         if [[ "$DRY_RUN" == "true" ]]; then
+            log_debug "Dry run mode - continuing to next directory" >&2
             continue
         fi
 
         # If no files were deleted, skip to next directory
         if [[ $deleted -eq 0 ]]; then
+            log_debug "No files deleted from '$dir', skipping to next directory" >&2
             continue
         fi
 
         # Brief wait to let system update disk usage
+        log_debug "Waiting 1 second for system to update disk usage" >&2
         sleep 1
     done
 
@@ -331,6 +442,13 @@ main_cleanup() {
             log_warn "Failed to get final disk usage"
         else
             log_info "Final disk usage: ${final_usage}%"
+
+            # Get detailed disk information for better monitoring
+            local disk_info
+            disk_info=$(df -h "/" 2>/dev/null | awk 'NR==2 {print "Used: " $3 ", Available: " $4 ", Total: " $2}')
+            if [[ -n "$disk_info" ]]; then
+                log_info "Disk details: $disk_info"
+            fi
         fi
     fi
 }
