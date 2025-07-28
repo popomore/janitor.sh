@@ -15,6 +15,7 @@ WORKDIR /app
 COPY janitor.sh /app/
 COPY test/test_janitor.sh /app/
 COPY test/test_janitor.conf /app/
+COPY test/test_force_cleanup.conf /app/
 
 # Set execute permissions
 RUN chmod +x /app/*.sh

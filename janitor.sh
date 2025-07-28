@@ -400,55 +400,66 @@ main_cleanup() {
         dir=$(echo "$dir" | xargs)
         log_debug "Processing directory: '$dir'"
 
-        # Check if target threshold is reached
-        log_debug "Checking if target threshold is reached"
-        if reached_target; then
-            log_debug "Target threshold reached, stopping cleanup"
-            break
-        fi
+        # Process directory until target threshold is reached or no more files
+        while true; do
+            # Check if target threshold is reached
+            log_debug "Checking if target threshold is reached"
+            if reached_target; then
+                log_debug "Target threshold reached, stopping cleanup"
+                break 2  # Break out of both while and for loops
+            fi
 
-        # Clean directory
-        local deleted
-        log_debug "About to call cleanup_directory for: '$dir'"
-        deleted=$(cleanup_directory "$dir")
-        log_debug "cleanup_directory returned: '$deleted'"
-        log_debug "DEBUG: deleted=[$deleted] (length: ${#deleted})"
+            # Clean directory
+            local deleted
+            log_debug "About to call cleanup_directory for: '$dir'"
+            deleted=$(cleanup_directory "$dir")
+            log_debug "cleanup_directory returned: '$deleted'"
+            log_debug "DEBUG: deleted=[$deleted] (length: ${#deleted})"
 
-        # Validate that deleted is a number
-        if ! [[ "$deleted" =~ ^[0-9]+$ ]]; then
-            log_error "Non-numeric deleted value: '$deleted'"
-            continue
-        fi
+            # Validate that deleted is a number
+            if ! [[ "$deleted" =~ ^[0-9]+$ ]]; then
+                log_error "Non-numeric deleted value: '$deleted'"
+                break  # Break out of while loop, move to next directory
+            fi
 
-        log_debug "Directory '$dir' cleanup result: $deleted files"
-        log_debug "About to add $deleted to total_deleted (currently $total_deleted)"
-        # Ensure deleted is a valid number (robust conversion)
-        log_debug "Before conversion: deleted='$deleted'"
-        deleted=$((10#$deleted))
-        log_debug "After conversion: deleted=$deleted"
-        log_debug "Before arithmetic: total_deleted=$total_deleted, deleted=$deleted"
-        total_deleted=$((total_deleted + deleted))
-        log_debug "After arithmetic: total_deleted=$total_deleted"
-        log_debug "Total deleted so far: $total_deleted"
-        log_debug "About to check if we should continue to next directory"
+            log_debug "Directory '$dir' cleanup result: $deleted files"
+            log_debug "About to add $deleted to total_deleted (currently $total_deleted)"
+            # Ensure deleted is a valid number (robust conversion)
+            log_debug "Before conversion: deleted='$deleted'"
+            deleted=$((10#$deleted))
+            log_debug "After conversion: deleted=$deleted"
+            log_debug "Before arithmetic: total_deleted=$total_deleted, deleted=$deleted"
+            total_deleted=$((total_deleted + deleted))
+            log_debug "After arithmetic: total_deleted=$total_deleted"
+            log_debug "Total deleted so far: $total_deleted"
 
-        # If in dry run mode, continue processing all directories
-        if [[ "$DRY_RUN" == "true" ]]; then
-            log_debug "Dry run mode - continuing to next directory"
-            continue
-        fi
+            # If in dry run mode, continue processing all directories
+            if [[ "$DRY_RUN" == "true" ]]; then
+                log_debug "Dry run mode - continuing to next directory"
+                break  # Break out of while loop, move to next directory
+            fi
 
-        # If no files were deleted, skip to next directory
-        if [[ $deleted -eq 0 ]]; then
-            log_debug "No files deleted from '$dir', skipping to next directory"
-            continue
-        fi
+            # If no files were deleted, move to next directory
+            if [[ $deleted -eq 0 ]]; then
+                log_debug "No files deleted from '$dir', moving to next directory"
+                break  # Break out of while loop, move to next directory
+            fi
 
-        log_debug "Files were deleted from '$dir', will wait before next directory"
+            log_debug "Files were deleted from '$dir', will wait before next batch"
 
-        # Brief wait to let system update disk usage
-        log_debug "Waiting 1 second for system to update disk usage"
-        sleep 1
+            # Brief wait to let system update disk usage
+            log_debug "Waiting 1 second for system to update disk usage"
+            sleep 1
+
+            # Check if target threshold is reached after deletion
+            log_debug "Checking if target threshold is reached after deletion"
+            if reached_target; then
+                log_debug "Target threshold reached after deletion, stopping cleanup"
+                break 2  # Break out of both while and for loops
+            fi
+
+            log_debug "Target threshold not reached, will continue processing '$dir'"
+        done
     done
 
     log_debug "Finished processing all directories"
